@@ -30,10 +30,10 @@ namespace airlab
             Mat3 Pinv_nexigo = Eigen::Map<const Eigen::Matrix<double, 3, 4, Eigen::RowMajor>>(nexigo_pmat.data()).leftCols<3>().inverse();
             cam_info_["logitec_cam"] = Pinv_logi;
             cam_info_["nexigo_cam"] = Pinv_nexigo;
-            const double tag_size = 0.2; //200 mm
+
             logitec_tag_sub_ = this->create_subscription<apriltag_msgs::msg::AprilTagDetectionArray>("/apriltag_logitec/detections", qos, [&]
                     (apriltag_msgs::msg::AprilTagDetectionArray::SharedPtr msg){
-
+                const double tag_size = 0.2; //200 mm
                 for(const auto& detection: msg->detections)
                 {
                     geometry_msgs::msg::Transform transform;
@@ -47,7 +47,7 @@ namespace airlab
 
             nexigo_tag_sub_ = this->create_subscription<apriltag_msgs::msg::AprilTagDetectionArray>("/apriltag_nexigo/detections", qos, [&]
                     (apriltag_msgs::msg::AprilTagDetectionArray::SharedPtr msg){
-
+                const double tag_size = 0.2; //200 mm
                 for(const auto& detection: msg->detections)
                 {
                     geometry_msgs::msg::Transform transform;
