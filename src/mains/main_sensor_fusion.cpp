@@ -97,7 +97,7 @@ namespace airlab
 
             const Eigen::Quaterniond q(R);
 
-            RCLCPP_INFO_STREAM(get_logger(), tt);
+            RCLCPP_INFO_STREAM(get_logger(), tt.transpose());
 
             t.translation.x = tt.x();
             t.translation.y = tt.y();
