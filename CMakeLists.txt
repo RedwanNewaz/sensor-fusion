@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 project(sensor_fusion)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CXX_EXTENSIONS OFF)
 set(CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pedantic -Wextra")
@@ -36,11 +36,58 @@ set(SRC_EXCEPT_MAIN
         ${measurement_vector_views_SRC}
 )
 
-add_executable(sensor_fusion_udacity_sim
+#add_library(${PROJECT_NAME} ${SRC_EXCEPT_MAIN})
+#target_link_libraries(${PROJECT_NAME} Eigen3)
+
+### add ros support
+find_package(ament_cmake REQUIRED)
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(irobot_create_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(rcl_interfaces REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(apriltag_msgs REQUIRED)
+
+add_library(${PROJECT_NAME}  SHARED
+        src/mains/main_sensor_fusion.cpp
         ${SRC_EXCEPT_MAIN}
-        src/mains/udacity_sim_main.cpp
-)
-target_link_libraries(sensor_fusion_udacity_sim z ssl uv uWS)
+        )
+target_include_directories(${PROJECT_NAME}  PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+target_compile_definitions(${PROJECT_NAME}
+        PRIVATE "${PROJECT_NAME}_CPP_BUILDING_DLL")
+ament_target_dependencies(${PROJECT_NAME}
+        "rclcpp"
+        "geometry_msgs"
+        "nav_msgs"
+        "apriltag_msgs"
+        "visualization_msgs"
+        "tf2_ros"
+        "rclcpp_action"
+        "rclcpp_components")
+rclcpp_components_register_node(${PROJECT_NAME} PLUGIN "airlab::apriltag_fusion" EXECUTABLE ${PROJECT_NAME}_node)
+
+install(TARGETS
+        ${PROJECT_NAME}
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin
+        )
+ament_export_dependencies(rosidl_default_runtime)
+ament_package()
+install(DIRECTORY launch
+        DESTINATION share/${PROJECT_NAME})
+
+install(DIRECTORY config
+        DESTINATION share/${PROJECT_NAME})
+
+
+
 
 add_executable(sensor_fusion_all
         ${SRC_EXCEPT_MAIN}
