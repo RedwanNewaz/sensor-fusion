@@ -42,69 +42,40 @@ namespace airlab
     public:
         apriltag_fusion(const rclcpp::NodeOptions& options): rclcpp::Node("apriltag_fusion", options), filterInit_(false)
         {
+            this->declare_parameter("tag_id", 7);
 
-            create3_state_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("/ekf/apriltag/viz", 10);
+            ukfInit();
 
-            CTRV::ProcessNoiseCovarianceMatrix ctrv_mtx;
-            ctrv_mtx << 0.000126025,  0.0,
-                    0.0,      0.00016;
-            Radar::MeasurementCovarianceMatrix radar_mtx;
-            radar_mtx << 0.0009,    0.0,  0.0,
-                    0.0, 0.000009,  0.0,
-                    0.0,    0.0, 0.0009;
+            readTransformation();
 
-            ukf_= std::make_unique<UKF_CTRV_RADAR_Fusion>(ctrv_mtx, radar_mtx);
+            create3_state_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("/apriltag/viz", 10);
+            tag_id_ = this->get_parameter("tag_id").get_parameter_value().get<int>();
 
 
-            // TODO compute cmd_vel and rho_dot  from ros topics
+            // compute cmd_vel and rho_dot  from ros topics
             control_vector_ = CTRV::ControlVector::Zero();
             rho_dot_ = yaw_rate_ = 0;
 
-            odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>("/ac31/odom", qos, [&](nav_msgs::msg::Odometry::SharedPtr msg)
+            odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>("odom", qos, [&](nav_msgs::msg::Odometry::SharedPtr msg)
             {
                 auto linear_vel = msg->twist.twist.linear;
                 rho_dot_ = sqrt(linear_vel.x * linear_vel.x + linear_vel.y * linear_vel.y);
                 yaw_rate_ = msg->twist.twist.angular.z;
             });
 
-            cmd_sub_ = this->create_subscription<geometry_msgs::msg::Twist>("/ac31/cmd_vel", qos   , [&](geometry_msgs::msg::Twist::SharedPtr msg){
+            cmd_sub_ = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel", qos   , [&](geometry_msgs::msg::Twist::SharedPtr msg){
                 auto acc_linear = msg->linear.x;
                 auto acc_angular = msg->angular.z;
                 control_vector_ << acc_linear, acc_linear, acc_linear, acc_angular, acc_angular;
             });
 
 
-            vector<double>logitec_pmat{933.4418334960938, 0, 978.0901233670083, 0, 0, 995.1202392578125, 490.9420947208673, 0, 0, 0, 1, 0};
-            vector<double> nexigo_pmat{863.1061401367188, 0, 946.3947846149531, 0, 0, 903.219482421875, 411.1189551965581, 0, 0, 0, 1, 0};
-
-
-            vector<double> logitec_to_map{-0.232, 1.258, 3.098, 0.996, -0.013, -0.026, 0.073};
-            vector<double>nexigo_to_map{0.259, 1.737, 3.070, -0.014, 0.970, 0.226, 0.080};
-
-            auto toTransform = [](const vector<double>& vecTf)
-            {
-                tf2::Transform res;
-                res.setOrigin(tf2::Vector3(vecTf[0], vecTf[1], vecTf[2]));
-                res.setRotation(tf2::Quaternion(vecTf[3], vecTf[4], vecTf[5], vecTf[6]));
-                return res;
-            };
-
-            Mat3 Pinv_logi = Eigen::Map<const Eigen::Matrix<double, 3, 4, Eigen::RowMajor>>(logitec_pmat.data()).leftCols<3>().inverse();
-            Mat3 Pinv_nexigo = Eigen::Map<const Eigen::Matrix<double, 3, 4, Eigen::RowMajor>>(nexigo_pmat.data()).leftCols<3>().inverse();
-
-            cam_info_["logitec_cam"] = Pinv_logi;
-            cam_info_["nexigo_cam"] = Pinv_nexigo;
-
-            to_map_["logitec_cam"] = toTransform(logitec_to_map);
-            to_map_["nexigo_cam"] = toTransform(nexigo_to_map);
-
-            tag_size_ = 0.2; // 200 mm
-
             logitec_tag_sub_ = this->create_subscription<apriltag_msgs::msg::AprilTagDetectionArray>("/apriltag_logitec/detections", qos, [&]
                     (apriltag_msgs::msg::AprilTagDetectionArray::SharedPtr msg){
                     for(const auto& detection: msg->detections)
                     {
-                        transformToMapCoordinate(msg->header.stamp.nanosec, detection.homography, msg->header.frame_id);
+                        if(detection.id == tag_id_)
+                            transformToMapCoordinate(msg->header.stamp.nanosec, detection.homography, msg->header.frame_id);
                     }
             });
 
@@ -112,9 +83,12 @@ namespace airlab
                     (apriltag_msgs::msg::AprilTagDetectionArray::SharedPtr msg){
                     for(const auto& detection: msg->detections)
                     {
-                        transformToMapCoordinate(msg->header.stamp.nanosec, detection.homography, msg->header.frame_id);
+                        if(detection.id == tag_id_)
+                            transformToMapCoordinate(msg->header.stamp.nanosec, detection.homography, msg->header.frame_id);
                     }
             });
+
+            timer_ = this->create_wall_timer(1s, [this] { publish_traj(); });
 
             RCLCPP_INFO(get_logger(), "apriltag fusion node started");
         }
@@ -127,12 +101,13 @@ namespace airlab
         unordered_map<string, tf2::Transform> to_map_;
 
         bool filterInit_;
-        unique_ptr<UKF_CTRV_RADAR_Fusion> ukf_;
+        unique_ptr<UKF_CTRV_LIDAR_RADAR_Fusion> ukf_;
         uint32_t prev_timestamp_;
         double rho_dot_, yaw_rate_;
         CTRV::ControlVector control_vector_;
-        CTRV::StateVector mu_;
-        CTRV::StateCovarianceMatrix Sigma_;
+        CTRV::ProcessModel pm_;
+        rclcpp::TimerBase::SharedPtr timer_;
+        int tag_id_;
 
         double tag_size_;
         enum COLOR{
@@ -140,8 +115,67 @@ namespace airlab
             GREEN,
             DEFAULT
         };
+        std::unordered_map<COLOR, std::vector<geometry_msgs::msg::Point>> pubData_;
 
     private:
+
+        void ukfInit()
+        {
+            this->declare_parameter("ctrv_mtx", vector<double>{0.005,  0.0, 0.0, 0.005});
+            this->declare_parameter("lidar_mtx", vector<double>{0.0225,0.0, 0.0, 0.0225});
+            this->declare_parameter("radar_mtx", vector<double>{2.050,  0.000,  0.00, 0.000,  2.050,  0.00, 0.000,  0.000,  0.09});
+
+            // retrieve sensor fusion
+            vector<double> ctrv_vec, lidar_vec, radar_vec;
+            ctrv_vec = this->get_parameter("ctrv_mtx").get_parameter_value().get<vector<double>>();
+            lidar_vec = this->get_parameter("lidar_mtx").get_parameter_value().get<vector<double>>();
+            radar_vec = this->get_parameter("radar_mtx").get_parameter_value().get<vector<double>>();
+
+            CTRV::ProcessNoiseCovarianceMatrix ctrv_mtx = Eigen::Map<CTRV::ProcessNoiseCovarianceMatrix>(ctrv_vec.data());
+            Lidar::MeasurementCovarianceMatrix lidar_mtx = Eigen::Map<Lidar::MeasurementCovarianceMatrix>(lidar_vec.data());
+            Radar::MeasurementCovarianceMatrix radar_mtx = Eigen::Map<Radar::MeasurementCovarianceMatrix>(radar_vec.data());
+
+            pm_.SetProcessNoiseCovarianceMatrix(ctrv_mtx);
+            ukf_= std::make_unique<UKF_CTRV_LIDAR_RADAR_Fusion>(ctrv_mtx, lidar_mtx, radar_mtx);
+        }
+
+        void readTransformation()
+        {
+            this->declare_parameter("logitec_pmat", vector<double>{933.4418334960938, 0, 978.0901233670083, 0, 0, 995.1202392578125, 490.9420947208673, 0, 0, 0, 1, 0});
+            this->declare_parameter("nexigo_pmat", vector<double>{863.1061401367188, 0, 946.3947846149531, 0, 0, 903.219482421875, 411.1189551965581, 0, 0, 0, 1, 0});
+            this->declare_parameter("logitec_to_map", vector<double>{-0.232, 1.258, 3.098, 0.996, -0.013, -0.026, 0.073});
+            this->declare_parameter("nexigo_to_map", vector<double>{0.259, 1.737, 3.070, -0.014, 0.970, 0.226, 0.080});
+            this->declare_parameter("tag_size", 0.2);
+
+            tag_size_ = this->get_parameter("tag_size").get_parameter_value().get<double>();; // 200 mm
+
+            auto toTransform = [](const vector<double>& vecTf)
+            {
+                tf2::Transform res;
+                res.setOrigin(tf2::Vector3(vecTf[0], vecTf[1], vecTf[2]));
+                res.setRotation(tf2::Quaternion(vecTf[3], vecTf[4], vecTf[5], vecTf[6]));
+                return res;
+            };
+
+            vector<double> logitec_pmat, nexigo_pmat, logitec_to_map, nexigo_to_map;
+
+            logitec_pmat = this->get_parameter("logitec_pmat").get_parameter_value().get<vector<double>>();
+            nexigo_pmat = this->get_parameter("nexigo_pmat").get_parameter_value().get<vector<double>>();
+            logitec_to_map = this->get_parameter("logitec_to_map").get_parameter_value().get<vector<double>>();
+            nexigo_to_map = this->get_parameter("nexigo_to_map").get_parameter_value().get<vector<double>>();
+
+
+            Mat3 Pinv_logi = Eigen::Map<const Eigen::Matrix<double, 3, 4, Eigen::RowMajor>>(logitec_pmat.data()).leftCols<3>().inverse();
+            Mat3 Pinv_nexigo = Eigen::Map<const Eigen::Matrix<double, 3, 4, Eigen::RowMajor>>(nexigo_pmat.data()).leftCols<3>().inverse();
+
+            cam_info_["logitec_cam"] = Pinv_logi;
+            cam_info_["nexigo_cam"] = Pinv_nexigo;
+
+            to_map_["logitec_cam"] = toTransform(logitec_to_map);
+            to_map_["nexigo_cam"] = toTransform(nexigo_to_map);
+        }
+
+
         void transformToMapCoordinate(const uint32_t timestamp, const std::array<double, 9>& H, const string& frame_id)
         {
 
@@ -158,96 +192,78 @@ namespace airlab
             auto origin = MapOrigin - tf2Transform.getOrigin();
             tf2Transform.setOrigin(origin);
 
-//            filterInput(timestamp, tf2Transform);
-            state_callback(tf2Transform, DEFAULT);
+            filterInput(timestamp, tf2Transform);
+//            state_callback(tf2Transform, DEFAULT);
 
         }
-
-        void filterInput(const uint32_t timestamp, const tf2::Transform tf2Transform)
+        Radar::Measurement stateToRadar(const uint32_t timestamp, const tf2::Transform& tf2Transform)
         {
-            // convert it to radar measurement vector
             auto origin = tf2Transform.getOrigin();
             double rho = sqrt(origin.x() * origin.x() + origin.y() * origin.y());
             double alpha = atan2(origin.y(), origin.x());
-            double roll, pitch, yaw;
-            tf2::Matrix3x3 mat(tf2Transform.getRotation());
-            mat.getRPY(roll, pitch, yaw);
-
-            // TODO compute rho_dot and yaw_rate from odom
-
-
 
             Radar::MeasurementVector mv;
             mv << rho, alpha, rho_dot_;
             auto time = timestamp / 1.0e9;
             Radar::Measurement radar_meas{time, mv};
+            return radar_meas;
+        }
+
+        Lidar::Measurement stateToLidar(const uint32_t timestamp, const tf2::Transform& tf2Transform)
+        {
+            auto origin = tf2Transform.getOrigin();
+            Lidar::MeasurementVector mv;
+            mv << origin.x(), origin.y();
+            auto time = timestamp / 1.0e9;
+            Lidar::Measurement lidar_meas{time, mv};
+            return lidar_meas;
+        }
 
 
+        void filterInput(const uint32_t timestamp, const tf2::Transform& tf2Transform)
+        {
 
-            // compute process model
-            CTRV::ProcessModel pm;
-            CTRV::ProcessNoiseCovarianceMatrix mtx;
-            mtx << 1.26e-3,  0.0,
-                    0.0,      1.6e-3;
-
-            pm.SetProcessNoiseCovarianceMatrix(mtx);
-
-            // compute belief
-            double dt;
-            if(filterInit_)
+            if(!filterInit_)
             {
                 prev_timestamp_ = timestamp;
                 filterInit_ = true;
-                //5 components---px, py, v, yaw, yaw_rate
-                mu_ << origin.x(), origin.y(), rho_dot_, yaw, yaw_rate_;
-                Sigma_ = Eigen::MatrixXd::Identity(5,5);
                 return;
             }
-            else
+
+            auto beliefToTf = [&](const BEL& belief)
             {
-                dt = (timestamp - prev_timestamp_) / 1.0e9;
-            }
+                const auto& sv{belief.mu()};
+                CTRV::ROStateVectorView state_vector_view{sv};
 
+                tf2::Transform state;
+                auto origin = tf2::Vector3(state_vector_view.px(), state_vector_view.py(), 0);
+                state.setRotation(tf2Transform.getRotation());
+                state.setOrigin(origin);
+                return state;
+            };
 
+            // convert time from nanosecond scale to sec scale
+            auto time = timestamp / 1.0e9;
+            auto dt = (timestamp - prev_timestamp_) / 1.0e9;
 
+            // initial obsrvation is very noisy use lidar point observation model to filter noise
+            // process liadr measurement to make prediction
+            Lidar::Measurement lidar_meas = stateToLidar(timestamp, tf2Transform);
+            BEL belief_initial{ukf_->ProcessMeasurement(lidar_meas)};
+            //use control and process model to make prediction
+            auto belief_prior{UKF::Predict(belief_initial, control_vector_ ,   dt, pm_)};
 
-//            BEL belief_initial{time, mu_, Sigma_};
-//            auto belief_prior{UKF::Predict(belief_initial, control_vector_ / dt, time, pm)};
-//
-//            double uncertainty = 1.0 / belief_prior.Sigma().determinant();
-//
-//            if(uncertainty < 1e16)
-//            {
-//                ukf_->SetBelief(belief_prior);
-//                ukf_->ProcessMeasurement(radar_meas);
-//
-//            }
-//            else
-//            {
-//                ukf_->ProcessMeasurement(radar_meas);
-//                cout << uncertainty << endl;
-//            }
-
-            ukf_->ProcessMeasurement(radar_meas);
-
-            auto belief = ukf_->GetBelief();
-            mu_ = belief.mu();
-            Sigma_ = belief.Sigma();
-
-
-            const auto& sv{belief.mu()};
-            CTRV::ROStateVectorView state_vector_view{sv};
-            tf2::Transform state(tf2Transform);
-            origin = state.getOrigin();
-            origin.setX(state_vector_view.px());
-            origin.setY(state_vector_view.py());
-            state.setOrigin(origin);
+            // fuse apriltag with odom velocity information with the radar model to update state
+            Radar::Measurement radar_meas = stateToRadar(timestamp, beliefToTf(belief_prior));
+            auto belief{ukf_->ProcessMeasurement(radar_meas)};
+            auto state = beliefToTf(belief);
             state_callback(state, DEFAULT);
             prev_timestamp_ = timestamp;
-
-
-
         }
+
+
+
+
         void getPose(const std::array<double, 9>& H,
                      const Mat3& Pinv,
                      geometry_msgs::msg::Transform& t,
@@ -306,6 +322,30 @@ namespace airlab
             marker.color.a = 0.85;
             tf2::toMsg(tf, marker.pose);
             create3_state_pub_->publish(marker);
+            pubData_[color].push_back(marker.pose.position);
+        }
+
+        void publish_traj()
+        {
+            // it is problematic if we continuously publish long trajectory use timer function to periodically publish trajectory
+            auto color = DEFAULT;
+            if(pubData_[color].empty())
+                return;
+
+            visualization_msgs::msg::Marker trajMarker;
+            std::copy(pubData_[color].begin(), pubData_[color].end(), std::back_inserter(trajMarker.points));
+            trajMarker.id = 202;
+            trajMarker.action = visualization_msgs::msg::Marker::ADD;
+            trajMarker.header.stamp = get_clock()->now();
+            trajMarker.header.frame_id = "map";
+
+            trajMarker.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+            trajMarker.ns = get_namespace();
+            trajMarker.color.g = 1;
+            trajMarker.color.b = 1;
+            trajMarker.color.a = 0.7;
+            trajMarker.scale.x = trajMarker.scale.y = trajMarker.scale.z = 0.08;
+            create3_state_pub_->publish(trajMarker);
         }
 
     };
