@@ -51,6 +51,8 @@ namespace airlab
             create3_state_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("/apriltag/viz", 10);
             tag_id_ = this->get_parameter("tag_id").get_parameter_value().get<int>();
 
+            robot_state_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("apriltag/state", 10);
+
 
             // compute cmd_vel and rho_dot  from ros topics
             control_vector_ = CTRV::ControlVector::Zero();
@@ -97,6 +99,7 @@ namespace airlab
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
         rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr create3_state_pub_;
+        rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr robot_state_pub_;
         unordered_map<string, Mat3> cam_info_;
         unordered_map<string, tf2::Transform> to_map_;
 
@@ -257,8 +260,30 @@ namespace airlab
             Radar::Measurement radar_meas = stateToRadar(timestamp, beliefToTf(belief_prior));
             auto belief{ukf_->ProcessMeasurement(radar_meas)};
             auto state = beliefToTf(belief);
+            pub_robot_state(state);
             state_callback(state, DEFAULT);
             prev_timestamp_ = timestamp;
+        }
+
+        void pub_robot_state(const tf2::Transform& t)
+        {
+            nav_msgs::msg::Odometry odom;
+            auto pos = t.getOrigin();
+            auto ori = t.getRotation();
+            odom.header.stamp = get_clock()->now();
+            odom.header.frame_id = "map";
+
+            odom.pose.pose.position.x = pos.x();
+            odom.pose.pose.position.y = pos.y();
+            odom.pose.pose.position.z = pos.z();
+
+            odom.pose.pose.orientation.x = ori.x();
+            odom.pose.pose.orientation.y = ori.y();
+            odom.pose.pose.orientation.z = ori.z();
+            odom.pose.pose.orientation.w = ori.w();
+
+            robot_state_pub_->publish(odom);
+
         }
 
 
