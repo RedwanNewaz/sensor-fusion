@@ -43,6 +43,7 @@ namespace airlab
         apriltag_fusion(const rclcpp::NodeOptions& options): rclcpp::Node("apriltag_fusion", options), filterInit_(false)
         {
             this->declare_parameter("tag_id", 7);
+            this->declare_parameter("sensor_fusion", 0);
 
             ukfInit();
 
@@ -50,6 +51,7 @@ namespace airlab
 
             create3_state_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("/apriltag/viz", 10);
             tag_id_ = this->get_parameter("tag_id").get_parameter_value().get<int>();
+            sensorFusion_ = this->get_parameter("sensor_fusion").get_parameter_value().get<int>();
 
             robot_state_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("apriltag/state", 10);
 
@@ -104,6 +106,7 @@ namespace airlab
         unordered_map<string, tf2::Transform> to_map_;
 
         bool filterInit_;
+        bool sensorFusion_;
         unique_ptr<UKF_CTRV_LIDAR_RADAR_Fusion> ukf_;
         uint32_t prev_timestamp_;
         double rho_dot_, yaw_rate_;
@@ -192,10 +195,23 @@ namespace airlab
             //  M_t_R = M_t_X * X_t_R
             tf2::Vector3 MapOrigin(0, 0, 0);
             tf2Transform = to_map_[frame_id].inverseTimes(tf2Transform);
-            auto origin = MapOrigin - tf2Transform.getOrigin();
-            tf2Transform.setOrigin(origin);
+            auto q = tf2Transform.getRotation();
+            tf2::Matrix3x3 mat(q);
+            double roll, pitch, yaw;
+            mat.getRPY(roll, pitch, yaw);
+            q.setRPY(0, 0, yaw + M_PI);
+            tf2Transform.setRotation(q);
 
-            filterInput(timestamp, tf2Transform);
+
+
+            if(sensorFusion_)
+                filterInput(timestamp, tf2Transform);
+            else
+            {
+                pub_robot_state(tf2Transform);
+                state_callback(tf2Transform, DEFAULT);
+            }
+
 //            state_callback(tf2Transform, DEFAULT);
 
         }

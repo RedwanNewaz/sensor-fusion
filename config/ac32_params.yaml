@@ -12,3 +12,5 @@ sensor_fusion_node:
     lidar_mtx: [0.0225, 0.0, 0.0, 0.0225]
     radar_mtx: [2.050,  0.000,  0.00, 0.000,  2.050,  0.00, 0.000,  0.000,  0.09]
 
+    sensor_fusion: 0
+
