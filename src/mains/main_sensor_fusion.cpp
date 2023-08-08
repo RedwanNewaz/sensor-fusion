@@ -93,7 +93,13 @@ namespace airlab
             });
 
             timer_ = this->create_wall_timer(1s, [this] { publish_traj(); });
-
+            estimator_loop_ = this->create_wall_timer(10ms, [this] {
+                auto currentTime = this->get_clock()->now().nanoseconds();
+                if (filterInit_)
+                {
+                    filterInput(currentTime, robotState_);
+                }
+            });
             RCLCPP_INFO(get_logger(), "apriltag fusion node started");
         }
     private:
@@ -107,12 +113,13 @@ namespace airlab
 
         bool filterInit_;
         bool sensorFusion_;
+        tf2::Transform robotState_;
         unique_ptr<UKF_CTRV_LIDAR_RADAR_Fusion> ukf_;
         uint32_t prev_timestamp_;
         double rho_dot_, yaw_rate_;
         CTRV::ControlVector control_vector_;
         CTRV::ProcessModel pm_;
-        rclcpp::TimerBase::SharedPtr timer_;
+        rclcpp::TimerBase::SharedPtr timer_, estimator_loop_;
         int tag_id_;
 
         double tag_size_;
@@ -124,6 +131,7 @@ namespace airlab
         std::unordered_map<COLOR, std::vector<geometry_msgs::msg::Point>> pubData_;
 
     private:
+
 
         void ukfInit()
         {
@@ -194,22 +202,32 @@ namespace airlab
 
             //  M_t_R = M_t_X * X_t_R
             tf2::Vector3 MapOrigin(0, 0, 0);
-            tf2Transform = to_map_[frame_id].inverseTimes(tf2Transform);
+            robotState_ = to_map_[frame_id].inverseTimes(tf2Transform);
+            auto origin = MapOrigin - robotState_.getOrigin();
+            robotState_.setOrigin(origin);
+
+
             auto q = tf2Transform.getRotation();
             tf2::Matrix3x3 mat(q);
             double roll, pitch, yaw;
             mat.getRPY(roll, pitch, yaw);
-            q.setRPY(0, 0, yaw + M_PI);
-            tf2Transform.setRotation(q);
+            yaw = (frame_id == "nexigo_cam") ?  M_PI - yaw: 2 * M_PI - yaw;
+//            yaw = 2 * M_PI - yaw;
+            q.setRPY(0, 0,  yaw);
+            robotState_.setRotation(q);
 
+//            tf2Transform.setRotation(q);
 
-
-            if(sensorFusion_)
-                filterInput(timestamp, tf2Transform);
-            else
+            if(!filterInit_)
             {
-                pub_robot_state(tf2Transform);
-                state_callback(tf2Transform, DEFAULT);
+                prev_timestamp_ = this->get_clock()->now().nanoseconds();
+                filterInit_ = true;
+
+            }
+            else if(!sensorFusion_)
+            {
+                pub_robot_state(robotState_);
+                state_callback(robotState_, DEFAULT);
             }
 
 //            state_callback(tf2Transform, DEFAULT);
@@ -242,12 +260,6 @@ namespace airlab
         void filterInput(const uint32_t timestamp, const tf2::Transform& tf2Transform)
         {
 
-            if(!filterInit_)
-            {
-                prev_timestamp_ = timestamp;
-                filterInit_ = true;
-                return;
-            }
 
             auto beliefToTf = [&](const BEL& belief)
             {
