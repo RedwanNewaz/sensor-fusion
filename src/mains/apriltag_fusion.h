@@ -73,7 +73,7 @@ namespace airlab{
         tf2::Transform robotState_;
         tf2::Transform apriltagMeas_; 
         unique_ptr<UKF_CTRV_LIDAR_RADAR_Fusion> ukf_;
-        uint32_t prev_timestamp_;
+        u_int64_t prev_timestamp_;
         double rho_dot_, yaw_rate_;
         CTRV::ControlVector control_vector_;
         CTRV::ProcessModel pm_;

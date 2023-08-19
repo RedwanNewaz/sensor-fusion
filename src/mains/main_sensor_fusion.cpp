@@ -3,6 +3,9 @@
 //
 
 #include "apriltag_fusion.h"
+#include "timestamp_logger.h"
+
+
 
 
 
@@ -63,9 +66,12 @@ namespace airlab
 
     void apriltag_fusion::estimatorTimerCallback()
     {
-        auto currentTime = this->get_clock()->now().nanoseconds();
-        // auto dt = (currentTime - prev_timestamp_) / 1.0e9; // sec 
-        auto dt = 1.0 / 100.0; // sec 
+        auto currentTime = TimestampLogger::getInstance().getElapsedTime();
+        auto dt = (currentTime - prev_timestamp_) / 1.0e3; // sec 
+        dt =  dt / 100.0; // sec
+        // std::cout << dt1 << std::endl;  
+
+
         filterInput(currentTime, apriltagMeas_);
         auto belief_initial = ukf_->GetBelief();
         auto belief_prior{UKF::Predict(belief_initial, control_vector_,   dt, pm_)};
@@ -73,8 +79,7 @@ namespace airlab
         BEL belief_posterior{UKF::Update(belief_prior, radar_meas, radar_mm_)};        
         robotState_ = beliefToTF(belief_posterior);
         ukf_->SetBelief(belief_posterior);
-        pub_robot_state(robotState_);
-    
+        pub_robot_state(robotState_);    
     }
 
     void apriltag_fusion::apriltag_callback(geometry_msgs::msg::PoseArray::SharedPtr msg)
@@ -94,13 +99,12 @@ namespace airlab
             auto _id = atoi(ids[i].c_str());
             if(tag_id_ == _id)
             {
-                auto currentTime = this->get_clock()->now().nanoseconds();
+                auto currentTime = TimestampLogger::getInstance().getElapsedTime();
                 
                 tf2::fromMsg(pose, apriltagMeas_);
                 if (!filterInit_)
                 {
-                    filterInit_ = true; 
-                    prev_timestamp_ = currentTime;
+                    filterInit_ = true;
                 }
                 
                 prev_timestamp_ = currentTime;
@@ -142,7 +146,7 @@ namespace airlab
 
         Radar::MeasurementVector mv;
         mv << rho, alpha, rho_dot_;
-        auto time = timestamp / 1.0e9;
+        auto time = timestamp / 1.0e3;
         Radar::Measurement radar_meas{time, mv};
         return radar_meas;
     }
@@ -152,7 +156,7 @@ namespace airlab
         auto origin = tf2Transform.getOrigin();
         Lidar::MeasurementVector mv;
         mv << origin.x(), origin.y();
-        auto time = timestamp / 1.0e9;
+        auto time = timestamp / 1.0e3;
         Lidar::Measurement lidar_meas{time, mv};
         return lidar_meas;
     }
