@@ -45,12 +45,11 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(irobot_create_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(rcl_interfaces REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
-find_package(apriltag_msgs REQUIRED)
+
 
 add_library(${PROJECT_NAME}  SHARED
         src/mains/main_sensor_fusion.cpp
@@ -65,7 +64,6 @@ ament_target_dependencies(${PROJECT_NAME}
         "rclcpp"
         "geometry_msgs"
         "nav_msgs"
-        "apriltag_msgs"
         "visualization_msgs"
         "tf2_ros"
         "rclcpp_action"
@@ -78,8 +76,7 @@ install(TARGETS
         LIBRARY DESTINATION lib
         RUNTIME DESTINATION bin
         )
-ament_export_dependencies(rosidl_default_runtime)
-ament_package()
+
 install(DIRECTORY launch
         DESTINATION share/${PROJECT_NAME})
 
@@ -87,12 +84,13 @@ install(DIRECTORY config
         DESTINATION share/${PROJECT_NAME})
 
 
+ament_export_dependencies(rosidl_default_runtime)
+ament_package()
 
-
-add_executable(sensor_fusion_all
-        ${SRC_EXCEPT_MAIN}
-        src/mains/all_main.cpp
-)
+# add_executable(sensor_fusion_all
+#         ${SRC_EXCEPT_MAIN}
+#         src/mains/all_main.cpp
+# )
 
 add_library(Catch INTERFACE)
 add_executable( sensor_fusion_test

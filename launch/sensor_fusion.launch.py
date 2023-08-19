@@ -13,6 +13,15 @@ ARGUMENTS = [
     DeclareLaunchArgument('namespace', default_value='',
                           description='Robot namespace'),
 ]
+
+params = {
+    "ctrv_mtx": [0.9725,  0.0, 0.0, 0.9725], #[0.725,  0.0, 0.0, 0.725],
+    "lidar_mtx": [0.0275,0.0, 0.0, 0.0275], 
+    "radar_mtx": [0.9725,  0.000,  0.00, 
+                  0.000,  0.9725,  0.00, 
+                  0.000,  0.000,  0.025]
+}
+
 def generate_launch_description():
     ld = LaunchDescription(ARGUMENTS)
     namespace = LaunchConfiguration('namespace')
@@ -21,19 +30,15 @@ def generate_launch_description():
     if len(sys.argv) > 4:
         robotName = sys.argv[4].split("=")[-1]
 
-    # get path to params file
-    params_path = os.path.join(
-        sensor_fusion_dir,
-        'config',
-        '{}_params.yaml'.format(robotName)
-    )
-
-    print(params_path)
+    ld.add_action(Node(
+        package='multicam_tag_state_estimator', executable='multicam_tag_state_estimator_node', 
+        name="multicam_tag_state_estimator"
+    ))
     ld.add_action(Node(
         package='sensor_fusion', executable='sensor_fusion_node', output='screen',
         name="sensor_fusion_node",
-        namespace=namespace,
-        parameters=[params_path]
+        namespace=namespace, 
+        parameters=[params]
     ))
 
     return ld
