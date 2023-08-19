@@ -39,8 +39,8 @@ namespace airlab
         cmd_sub_ = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel", qos   , [&](geometry_msgs::msg::Twist::SharedPtr msg){
             auto acc_linear = msg->linear.x;
             auto acc_angular = msg->angular.z;
-            if(acc_linear != 0)
-                control_vector_ << acc_linear, acc_linear, acc_linear, acc_angular, acc_angular;
+            // if(acc_linear != 0)
+            control_vector_ << acc_linear, acc_linear, acc_linear, acc_angular, acc_angular;
         });
 
         pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseArray>("/apriltag/pose_detections", qos, [&](geometry_msgs::msg::PoseArray::SharedPtr msg){
