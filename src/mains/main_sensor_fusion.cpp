@@ -39,7 +39,6 @@ namespace airlab
         cmd_sub_ = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel", qos   , [&](geometry_msgs::msg::Twist::SharedPtr msg){
             auto acc_linear = msg->linear.x;
             auto acc_angular = msg->angular.z;
-            // if(acc_linear != 0)
             control_vector_ << acc_linear, acc_linear, acc_linear, acc_angular, acc_angular;
         });
 
@@ -182,26 +181,13 @@ namespace airlab
 
     void apriltag_fusion::filterInput(const uint32_t timestamp, const tf2::Transform& tf2Transform)
     {
-        
-    
         // initial obsrvation is very noisy use lidar point observation model to filter noise
         // process liadr measurement to make prediction
         Lidar::Measurement lidar_meas = stateToLidar(timestamp, tf2Transform);
         BEL belief_initial{ukf_->ProcessMeasurement(lidar_meas)};
-        //use control and process model to make prediction
-        // convert time from nanosecond scale to sec scale
-        // auto dt = (timestamp - prev_timestamp_) / 1.0e9;
-        // auto belief_prior{UKF::Predict(belief_initial, control_vector_,   dt, pm_)};
         // fuse apriltag with odom velocity information with the radar model to update state
         Radar::Measurement radar_meas = stateToRadar(timestamp, beliefToTF(belief_initial));
         auto belief{ukf_->ProcessMeasurement(radar_meas)};
-
-        // BEL belief_posterior{UKF::Update(belief_prior, radar_meas, radar_mm_)};
-        // auto state = beliefToTF(belief_posterior);
-        // pub_robot_state(state);
-        // ukf_->SetBelief(belief);
-        
-
     }
 
     void apriltag_fusion::pub_robot_state(const tf2::Transform& t)
